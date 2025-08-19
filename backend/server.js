@@ -202,11 +202,12 @@ app.post('/login/verify', async (req, res) => {
   }
 });
 
-// -------------- Servir FRONTEND (Vite => dist) --------------
-const clientBuildPath = path.resolve(__dirname, '../frontend/dist');
-// Si usas CRA en vez de Vite, cambia a '../frontend/build'
+// -------------- Servir FRONTEND (CRA => build) --------------
+const clientBuildPath = path.resolve(__dirname, '../frontend/build'); // 👈 CRA usa build/
 app.use(express.static(clientBuildPath));
-app.get('*', (_req, res) => {
+
+// Express 5: usar '/*' o '(.*)' en vez de '*'
+app.get('/*', (_req, res) => { 
   res.sendFile(path.join(clientBuildPath, 'index.html'));
 });
 
