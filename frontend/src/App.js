@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import {
-  startRegistration,
-  startAuthentication,
-} from '@simplewebauthn/browser';
+import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
 
-const BACKEND = 'http://localhost:8000';
+// En CRA se usan variables de entorno con prefijo REACT_APP_
+// En local: REACT_APP_API_URL=http://localhost:8000
+// En Render: REACT_APP_API_URL=https://tu-backend.onrender.com
+const API_BASE = process.env.REACT_APP_API_URL || '';
 
 export default function App() {
   const [username, setUsername] = useState('');
@@ -24,15 +24,9 @@ export default function App() {
   const handleRegister = async () => {
     try {
       setMsg('📥 Pidiendo opciones de registro...');
-      const options = await postJSON(`${BACKEND}/register/options`, { username });
-
-      // v11+: se usa objeto con { optionsJSON }
+      const options = await postJSON(`${API_BASE}/register/options`, { username });
       const attResp = await startRegistration({ optionsJSON: options });
-
-      const v = await postJSON(`${BACKEND}/register/verify`, {
-        username,
-        credential: attResp,
-      });
+      const v = await postJSON(`${API_BASE}/register/verify`, { username, credential: attResp });
       setMsg(v.verified ? '✅ Passkey registrada' : '❌ Registro no verificado');
     } catch (e) {
       console.error(e);
@@ -43,14 +37,9 @@ export default function App() {
   const handleLogin = async () => {
     try {
       setMsg('📥 Pidiendo opciones de login...');
-      const options = await postJSON(`${BACKEND}/login/options`, { username });
-
+      const options = await postJSON(`${API_BASE}/login/options`, { username });
       const asseResp = await startAuthentication({ optionsJSON: options });
-
-      const v = await postJSON(`${BACKEND}/login/verify`, {
-        username,
-        credential: asseResp,
-      });
+      const v = await postJSON(`${API_BASE}/login/verify`, { username, credential: asseResp });
       setMsg(v.verified ? '✅ Login OK' : '❌ Login no verificado');
     } catch (e) {
       console.error(e);

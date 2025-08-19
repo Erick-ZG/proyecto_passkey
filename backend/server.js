@@ -1,6 +1,8 @@
 // Node 20+, "type": "module" en package.json
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -9,16 +11,21 @@ import {
 } from '@simplewebauthn/server';
 import { isoUint8Array } from '@simplewebauthn/server/helpers';
 
+// --- ESM __dirname ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 app.use(express.json());
 
 // Config
+const PORT = process.env.PORT || 8000;
 const rpID = process.env.RPID || 'localhost';
 const ORIGINS = (process.env.ORIGINS || 'http://localhost:3000,http://localhost:5173')
   .split(',')
   .map(s => s.trim());
 
-// CORS (para front en 3000 y/o 5173)
+// CORS (útil en desarrollo; en prod no es necesario si todo es mismo dominio)
 app.use(
   cors({
     origin: ORIGINS,
@@ -27,11 +34,10 @@ app.use(
 );
 
 // DB en memoria
-// user = { username, userID (Base64URLString o ignorado), passkeys: WebAuthnCredential[] }
 const db = {
-  users: new Map(),              // key: username => value: { username, passkeys: [] }
-  regOptions: new Map(),         // key: username => last registration options
-  authOptions: new Map(),        // key: username => last auth options
+  users: new Map(),
+  regOptions: new Map(),
+  authOptions: new Map(),
 };
 
 // Util
@@ -52,20 +58,17 @@ app.post('/register/options', async (req, res) => {
 
   const user = getOrCreateUser(username);
 
-  // Excluir credenciales ya registradas para este usuario
   const excludeCredentials = user.passkeys.map(pk => ({
-    id: pk.id,           // Base64URLString (v11+)
-    transports: pk.transports, // opcional
+    id: pk.id,
+    transports: pk.transports,
   }));
 
-  // Si quieres forzar tu propio userID (BufferSource), usa isoUint8Array
-  // Puedes omitir userID y dejar que SWA genere uno aleatorio válido.
   const options = await generateRegistrationOptions({
     rpName: 'Demo Passkeys',
     rpID,
     userName: username,
     userDisplayName: username,
-    userID: isoUint8Array.fromUTF8String(username), // ✅ Uint8Array (cumple v10+)
+    userID: isoUint8Array.fromUTF8String(username),
     attestationType: 'none',
     authenticatorSelection: {
       residentKey: 'preferred',
@@ -75,7 +78,7 @@ app.post('/register/options', async (req, res) => {
   });
 
   db.regOptions.set(username, options);
-  return res.json(options); // ⚠️ devolver tal cual, sin transformar
+  return res.json(options);
 });
 
 // ---------- Registro: Verificación ----------
@@ -91,9 +94,9 @@ app.post('/register/verify', async (req, res) => {
 
   try {
     const verification = await verifyRegistrationResponse({
-      response: credential,                 // objeto enviado desde el navegador
-      expectedChallenge: opts.challenge,    // v13 usa .challenge directo
-      expectedOrigin: ORIGINS,              // puede ser un array de origins válidos
+      response: credential,
+      expectedChallenge: opts.challenge,
+      expectedOrigin: ORIGINS, // puede ser array
       expectedRPID: rpID,
     });
 
@@ -102,18 +105,16 @@ app.post('/register/verify', async (req, res) => {
         verification.registrationInfo;
 
       const newPasskey = {
-        id: cred.id,                         // Base64URL string
-        publicKey: cred.publicKey,           // Uint8Array
+        id: cred.id,
+        publicKey: cred.publicKey,
         counter: cred.counter,
-        transports: cred.transports,         // string[]
-        deviceType: credentialDeviceType,    // opcional
-        backedUp: credentialBackedUp,        // opcional
+        transports: cred.transports,
+        deviceType: credentialDeviceType,
+        backedUp: credentialBackedUp,
       };
 
       user.passkeys.push(newPasskey);
-
-      console.log(`✅ Passkey registrada para usuario "${username}":`, newPasskey);
-      console.log(`📌 Estado actual del usuario:`, user);
+      console.log(`✅ Passkey registrada para "${username}"`);
     }
 
     return res.json({ verified: verification.verified });
@@ -127,8 +128,7 @@ app.post('/register/verify', async (req, res) => {
 
 // ---------- Debug: ver todos los usuarios ----------
 app.get('/debug/users', (req, res) => {
-  const allUsers = Array.from(db.users.values());
-  res.json(allUsers);
+  res.json(Array.from(db.users.values()));
 });
 
 // ---------- Login: Opciones ----------
@@ -140,9 +140,8 @@ app.post('/login/options', async (req, res) => {
   if (!user) return res.status(400).json({ error: 'Usuario no existe' });
   if (!user.passkeys.length) return res.status(400).json({ error: 'Usuario sin passkeys' });
 
-  // allowedCredentials: ids en Base64URL (no Buffers, no undefined)
   const allowCredentials = user.passkeys.map(pk => ({
-    id: pk.id,             // Base64URLString
+    id: pk.id,
     transports: pk.transports,
   }));
 
@@ -173,7 +172,6 @@ app.post('/login/verify', async (req, res) => {
   if (!opts) return res.status(400).json({ error: 'No hay options de login activas' });
 
   try {
-    // Busca la passkey por el id que envía el browser (Base64URL)
     const passkey = user.passkeys.find(pk => pk.id === credential.id);
     if (!passkey) return res.status(400).json({ error: 'Credencial no encontrada' });
 
@@ -192,7 +190,7 @@ app.post('/login/verify', async (req, res) => {
 
     if (verification.verified && verification.authenticationInfo) {
       const { newCounter } = verification.authenticationInfo;
-      passkey.counter = newCounter; // actualiza counter
+      passkey.counter = newCounter;
     }
 
     return res.json({ verified: verification.verified });
@@ -204,6 +202,15 @@ app.post('/login/verify', async (req, res) => {
   }
 });
 
-app.listen(8000, () => {
-  console.log('✅ Backend corriendo en http://localhost:8000');
+// -------------- Servir FRONTEND (Vite => dist) --------------
+const clientBuildPath = path.resolve(__dirname, '../frontend/dist');
+// Si usas CRA en vez de Vite, cambia a '../frontend/build'
+app.use(express.static(clientBuildPath));
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(clientBuildPath, 'index.html'));
+});
+
+// Start
+app.listen(PORT, () => {
+  console.log(`✅ Backend corriendo en puerto ${PORT}`);
 });
