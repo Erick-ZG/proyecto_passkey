@@ -25,7 +25,7 @@ const ORIGINS = (process.env.ORIGINS || 'http://localhost:3000,http://localhost:
   .split(',')
   .map(s => s.trim());
 
-// CORS (útil en desarrollo; en prod no es necesario si todo es mismo dominio)
+// CORS (en prod no es necesario si todo es mismo dominio)
 app.use(
   cors({
     origin: ORIGINS,
@@ -33,7 +33,7 @@ app.use(
   }),
 );
 
-// DB en memoria
+// --- DB en memoria ---
 const db = {
   users: new Map(),
   regOptions: new Map(),
@@ -126,8 +126,8 @@ app.post('/register/verify', async (req, res) => {
   }
 });
 
-// ---------- Debug: ver todos los usuarios ----------
-app.get('/debug/users', (req, res) => {
+// ---------- Debug ----------
+app.get('/debug/users', (_req, res) => {
   res.json(Array.from(db.users.values()));
 });
 
@@ -202,12 +202,16 @@ app.post('/login/verify', async (req, res) => {
   }
 });
 
+// --- Healthcheck opcional (útil en Render) ---
+app.get('/healthz', (_req, res) => res.send('ok'));
+
 // -------------- Servir FRONTEND (CRA => build) --------------
-const clientBuildPath = path.resolve(__dirname, '../frontend/build'); // 👈 CRA usa build/
+// ⚠️ Asegúrate de haber construido el frontend: `cd frontend && npm run build`
+const clientBuildPath = path.join(__dirname, '../frontend/build');
 app.use(express.static(clientBuildPath));
 
-// Express 5: usar '/*' o '(.*)' en vez de '*'
-app.get('/*', (_req, res) => { 
+// Express 5: usa RegExp para el catch-all y evita capturar endpoints de API
+app.get(/^(?!\/(register|login|debug|healthz)(\/|$)).*/, (_req, res) => {
   res.sendFile(path.join(clientBuildPath, 'index.html'));
 });
 
